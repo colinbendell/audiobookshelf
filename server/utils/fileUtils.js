@@ -458,19 +458,40 @@ module.exports.encodeUriPath = (path) => {
 
 /**
  * Check if directory is writable.
- * This method is necessary because fs.access(directory, fs.constants.W_OK) does not work on Windows
+ * On non-Windows, fs.access with W_OK is used because it relies on cached attributes
+ * and avoids a full RPC round-trip on NFS mounts, which can hang indefinitely on
+ * stale hard-mounted shares. On Windows, fs.access W_OK only checks the read-only
+ * file attribute and not ACLs, so a write test is used instead.
+ * A timeout is applied in both cases as a backstop against hung mounts.
  *
  * @param {string} directory
  * @returns {Promise<boolean>}
  */
 module.exports.isWritable = async (directory) => {
+  const timeoutMs = 5000
+  const withTimeout = (promise) =>
+    Promise.race([
+      promise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('isWritable timeout')), timeoutMs))
+    ])
+
   try {
-    const accessTestFile = Path.join(directory, 'accessTest')
-    await fs.writeFile(accessTestFile, '')
-    await fs.remove(accessTestFile)
+    if (global.isWin) {
+      // fs.access W_OK is unreliable on Windows (only checks read-only attribute, not ACLs)
+      const accessTestFile = Path.join(directory, 'accessTest')
+      await withTimeout(
+        (async () => {
+          await fs.writeFile(accessTestFile, '')
+          await fs.remove(accessTestFile)
+        })()
+      )
+    } else {
+      // access(2) uses cached attributes on NFS — much less likely to hang
+      await withTimeout(fs.access(directory, fs.constants.W_OK))
+    }
     return true
   } catch (err) {
-    Logger.info(`[fileUtils] Directory is not writable "${directory}"`, err)
+    Logger.error(`[fileUtils] Directory is not writable "${directory}"`, err)
     return false
   }
 }

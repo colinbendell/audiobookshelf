@@ -4,7 +4,7 @@ const Database = require('../Database')
 const Logger = require('../Logger')
 
 const requestIp = require('../libs/requestIp')
-const jwt = require('../libs/jsonwebtoken')
+const jwt = require('../libs/jwt')
 
 class TokenManager {
   /** @type {string} JWT secret key */

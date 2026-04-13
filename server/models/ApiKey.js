@@ -1,5 +1,5 @@
 const { DataTypes, Model, Op } = require('sequelize')
-const jwt = require('jsonwebtoken')
+const jwt = require('../libs/jwt')
 const { LRUCache } = require('lru-cache')
 const Logger = require('../Logger')
 
@@ -169,25 +169,12 @@ class ApiKey extends Model {
       options.expiresIn = expiresIn
     }
 
-    return new Promise((resolve) => {
-      jwt.sign(
-        {
-          keyId,
-          name,
-          type: 'api'
-        },
-        tokenSecret,
-        options,
-        (err, token) => {
-          if (err) {
-            Logger.error(`[ApiKey] Error generating API key: ${err}`)
-            resolve(null)
-          } else {
-            resolve(token)
-          }
-        }
-      )
-    })
+    try {
+      return jwt.sign({ keyId, name, type: 'api' }, tokenSecret, options)
+    } catch (err) {
+      Logger.error(`[ApiKey] Error generating API key: ${err}`)
+      return null
+    }
   }
 
   /**

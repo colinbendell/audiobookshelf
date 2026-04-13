@@ -312,6 +312,7 @@ module.exports.downloadFile = (url, filepath, contentTypeFilter = null) => {
       .then((response) => {
         // Validate content type
         if (contentTypeFilter && !contentTypeFilter?.(response.headers?.['content-type'])) {
+          response.data.destroy()
           return reject(new Error(`Invalid content type "${response.headers?.['content-type'] || ''}"`))
         }
 
@@ -333,7 +334,15 @@ module.exports.downloadFile = (url, filepath, contentTypeFilter = null) => {
         })
 
         writer.on('finish', resolve)
-        writer.on('error', reject)
+        writer.on('error', (err) => {
+          response.data.destroy()
+          writer.destroy()
+          reject(err)
+        })
+        response.data.on('error', (err) => {
+          writer.destroy()
+          reject(err)
+        })
       })
       .catch((err) => {
         Logger.error(`[fileUtils] Failed to download file "${filepath}"`, err)
@@ -562,15 +571,15 @@ async function copyToExisting(srcPath, destPath) {
     // Handle errors
     readStream.on('error', (error) => {
       Logger.error(`[copyToExisting] Error reading from source file ${srcPath}: ${error.message}`)
-      readStream.close()
-      writeStream.close()
+      readStream.destroy()
+      writeStream.destroy()
       reject(error)
     })
 
     writeStream.on('error', (error) => {
       Logger.error(`[copyToExisting] Error writing to destination file ${destPath}: ${error.message}`)
-      readStream.close()
-      writeStream.close()
+      readStream.destroy()
+      writeStream.destroy()
       reject(error)
     })
   })

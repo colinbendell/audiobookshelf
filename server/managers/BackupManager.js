@@ -120,42 +120,46 @@ class BackupManager {
     }
 
     const zip = new StreamZip.async({ file: tempPath })
-    let entries
     try {
-      entries = await zip.entries()
-    } catch (error) {
-      // Not a valid zip file
-      Logger.error('[BackupManager] Failed to read backup file - backup might not be a valid .zip file', tempPath, error)
-      return res.status(400).send('Failed to read backup file - backup might not be a valid .zip file')
+      let entries
+      try {
+        entries = await zip.entries()
+      } catch (error) {
+        // Not a valid zip file
+        Logger.error('[BackupManager] Failed to read backup file - backup might not be a valid .zip file', tempPath, error)
+        return res.status(400).send('Failed to read backup file - backup might not be a valid .zip file')
+      }
+      if (!Object.keys(entries).includes('absdatabase.sqlite')) {
+        Logger.error(`[BackupManager] Invalid backup with no absdatabase.sqlite file - might be a backup created on an old Audiobookshelf server.`)
+        return res.status(500).send('Invalid backup with no absdatabase.sqlite file - might be a backup created on an old Audiobookshelf server.')
+      }
+
+      const data = await zip.entryData('details')
+      const details = data.toString('utf8').split('\n')
+
+      const backup = new Backup({ details, fullPath: tempPath })
+
+      if (!backup.serverVersion) {
+        Logger.error(`[BackupManager] Invalid backup with no server version - might be a backup created before version 2.0.0`)
+        return res.status(500).send('Invalid backup. Might be a backup created before version 2.0.0.')
+      }
+
+      backup.fileSize = await getFileSize(backup.fullPath)
+
+      const existingBackupIndex = this.backups.findIndex((b) => b.id === backup.id)
+      if (existingBackupIndex >= 0) {
+        Logger.warn(`[BackupManager] Backup already exists with id ${backup.id} - overwriting`)
+        this.backups.splice(existingBackupIndex, 1, backup)
+      } else {
+        this.backups.push(backup)
+      }
+
+      res.json({
+        backups: this.backups.map((b) => b.toJSON())
+      })
+    } finally {
+      await zip.close().catch((err) => Logger.error('[BackupManager] Failed to close zip in uploadBackup', err))
     }
-    if (!Object.keys(entries).includes('absdatabase.sqlite')) {
-      Logger.error(`[BackupManager] Invalid backup with no absdatabase.sqlite file - might be a backup created on an old Audiobookshelf server.`)
-      return res.status(500).send('Invalid backup with no absdatabase.sqlite file - might be a backup created on an old Audiobookshelf server.')
-    }
-
-    const data = await zip.entryData('details')
-    const details = data.toString('utf8').split('\n')
-
-    const backup = new Backup({ details, fullPath: tempPath })
-
-    if (!backup.serverVersion) {
-      Logger.error(`[BackupManager] Invalid backup with no server version - might be a backup created before version 2.0.0`)
-      return res.status(500).send('Invalid backup. Might be a backup created before version 2.0.0.')
-    }
-
-    backup.fileSize = await getFileSize(backup.fullPath)
-
-    const existingBackupIndex = this.backups.findIndex((b) => b.id === backup.id)
-    if (existingBackupIndex >= 0) {
-      Logger.warn(`[BackupManager] Backup already exists with id ${backup.id} - overwriting`)
-      this.backups.splice(existingBackupIndex, 1, backup)
-    } else {
-      this.backups.push(backup)
-    }
-
-    res.json({
-      backups: this.backups.map((b) => b.toJSON())
-    })
   }
 
   async requestCreateBackup(res) {
@@ -260,31 +264,35 @@ class BackupManager {
             data = await zip.entryData('details')
           } catch (error) {
             Logger.error(`[BackupManager] Failed to unzip backup "${fullFilePath}"`, error)
+            await zip?.close().catch((err) => Logger.error('[BackupManager] Failed to close zip in loadBackups', err))
             continue
           }
 
-          const details = data.toString('utf8').split('\n')
+          try {
+            const details = data.toString('utf8').split('\n')
 
-          const backup = new Backup({ details, fullPath: fullFilePath })
+            const backup = new Backup({ details, fullPath: fullFilePath })
 
-          if (!backup.serverVersion) {
-            // Backups before v2
-            Logger.error(`[BackupManager] Old unsupported backup was found "${backup.filename}"`)
-          } else if (!backup.key) {
-            // Backups before sqlite migration
-            Logger.warn(`[BackupManager] Old unsupported backup was found "${backup.filename}" (pre sqlite migration)`)
+            if (!backup.serverVersion) {
+              // Backups before v2
+              Logger.error(`[BackupManager] Old unsupported backup was found "${backup.filename}"`)
+            } else if (!backup.key) {
+              // Backups before sqlite migration
+              Logger.warn(`[BackupManager] Old unsupported backup was found "${backup.filename}" (pre sqlite migration)`)
+            }
+
+            backup.fileSize = await getFileSize(backup.fullPath)
+            const existingBackupWithId = this.backups.find((b) => b.id === backup.id)
+            if (existingBackupWithId) {
+              Logger.warn(`[BackupManager] Backup already loaded with id ${backup.id} - ignoring`)
+            } else {
+              this.backups.push(backup)
+            }
+
+            Logger.debug(`[BackupManager] Backup found "${backup.id}"`)
+          } finally {
+            await zip.close().catch((err) => Logger.error('[BackupManager] Failed to close zip in loadBackups', err))
           }
-
-          backup.fileSize = await getFileSize(backup.fullPath)
-          const existingBackupWithId = this.backups.find((b) => b.id === backup.id)
-          if (existingBackupWithId) {
-            Logger.warn(`[BackupManager] Backup already loaded with id ${backup.id} - ignoring`)
-          } else {
-            this.backups.push(backup)
-          }
-
-          Logger.debug(`[BackupManager] Backup found "${backup.id}"`)
-          await zip.close()
         }
       }
       Logger.info(`[BackupManager] ${this.backups.length} Backups Found`)
@@ -372,22 +380,28 @@ class BackupManager {
     const db = new sqlite3.Database(Database.dbPath)
     const dbFilePath = Path.join(global.ConfigPath, `absdatabase.${backup.id}.sqlite`)
     return new Promise(async (resolve, reject) => {
-      const backup = db.backup(dbFilePath)
-      backup.step(-1)
-      backup.finish()
+      try {
+        const backup = db.backup(dbFilePath)
+        backup.step(-1)
+        backup.finish()
 
-      // Max time ~2 mins
-      for (let i = 0; i < 240; i++) {
-        if (backup.completed) {
-          return resolve(dbFilePath)
-        } else if (backup.failed) {
-          return reject(backup.message || 'Unknown failure reason')
+        // Max time ~2 mins
+        for (let i = 0; i < 240; i++) {
+          if (backup.completed) {
+            return resolve(dbFilePath)
+          } else if (backup.failed) {
+            return reject(backup.message || 'Unknown failure reason')
+          }
+          await new Promise((r) => setTimeout(r, 500))
         }
-        await new Promise((r) => setTimeout(r, 500))
-      }
 
-      Logger.error(`[BackupManager] Backup sqlite timed out`)
-      reject('Backup timed out')
+        Logger.error(`[BackupManager] Backup sqlite timed out`)
+        reject('Backup timed out')
+      } finally {
+        db.close((err) => {
+          if (err) Logger.error('[BackupManager] Failed to close sqlite backup db', err)
+        })
+      }
     })
   }
 
@@ -430,12 +444,13 @@ class BackupManager {
         } else {
           // throw error
           Logger.error(`[BackupManager] Archiver error: ${err.message}`)
-          // throw err
+          output.destroy()
           reject(err)
         }
       })
       archive.on('error', function (err) {
         Logger.error(`[BackupManager] Archiver error: ${err.message}`)
+        output.destroy()
         reject(err)
       })
       archive.on('progress', ({ fs: fsobj }) => {

@@ -40,8 +40,6 @@ const BinaryManager = require('./managers/BinaryManager')
 const ShareManager = require('./managers/ShareManager')
 const LibraryScanner = require('./scanner/LibraryScanner')
 
-//Import the main Passport and Express-Session library
-const passport = require('passport')
 const expressSession = require('express-session')
 const MemoryStore = require('./libs/memorystore')
 
@@ -276,12 +274,10 @@ class Server {
         store: new MemoryStore(86400000, 86400000, 1000)
       })
     )
-    // init passport.js
-    app.use(passport.initialize())
-    // register passport in express-session
-    app.use(this.auth.ifAuthNeeded(passport.session()))
-    // config passport.js
-    await this.auth.initPassportJs()
+    // Restore user from session on each request
+    app.use(this.auth.ifAuthNeeded(this.auth.sessionMiddleware.bind(this.auth)))
+    // Initialize auth strategies
+    await this.auth.initAuth()
 
     const router = express.Router()
 

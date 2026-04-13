@@ -1,5 +1,3 @@
-const passport = require('passport')
-const LocalStrategy = require('../libs/passportLocal')
 const Database = require('../Database')
 const Logger = require('../Logger')
 
@@ -11,45 +9,39 @@ const requestIp = require('../libs/requestIp')
  */
 class LocalAuthStrategy {
   constructor() {
-    this.name = 'local'
-    this.strategy = null
+    this.enabled = false
   }
 
   /**
-   * Get the passport strategy instance
-   * @returns {LocalStrategy}
-   */
-  getStrategy() {
-    if (!this.strategy) {
-      this.strategy = new LocalStrategy({ passReqToCallback: true }, this.verifyCredentials.bind(this))
-    }
-    return this.strategy
-  }
-
-  /**
-   * Initialize the strategy with passport
+   * Enable the local strategy
    */
   init() {
-    passport.use(this.name, this.getStrategy())
+    this.enabled = true
   }
 
   /**
-   * Remove the strategy from passport
+   * Disable the local strategy
    */
   unuse() {
-    passport.unuse(this.name)
-    this.strategy = null
+    this.enabled = false
   }
 
   /**
-   * Verify user credentials
+   * Verify user credentials.
+   * Returns the user on success, null on failure.
+   *
    * @param {import('express').Request} req
    * @param {string} username
    * @param {string} password
-   * @param {Function} done - Passport callback
+   * @returns {Promise<import('../models/User')|null>}
    */
-  async verifyCredentials(req, username, password, done) {
-    // Load the user given it's username
+  async verifyCredentials(req, username, password) {
+    if (!username) {
+      this.logFailedLoginAttempt(req, username, 'No username provided')
+      return null
+    }
+
+    // Load the user given its username
     const user = await Database.userModel.getUserByUsername(username.toLowerCase())
 
     if (!user?.isActive) {
@@ -58,8 +50,7 @@ class LocalAuthStrategy {
       } else {
         this.logFailedLoginAttempt(req, username, 'User not found')
       }
-      done(null, null)
-      return
+      return null
     }
 
     // Check passwordless root user
@@ -67,33 +58,26 @@ class LocalAuthStrategy {
       if (password) {
         // deny login
         this.logFailedLoginAttempt(req, user.username, 'Root user has no password set')
-        done(null, null)
-        return
+        return null
       }
       // approve login
       Logger.info(`[LocalAuth] User "${user.username}" logged in from ip ${requestIp.getClientIp(req)}`)
-
-      done(null, user)
-      return
+      return user
     } else if (!user.pash) {
       this.logFailedLoginAttempt(req, user.username, 'User has no password set. Might have been created with OpenID')
-      done(null, null)
-      return
+      return null
     }
 
     // Check password match
     const compare = await bcrypt.compare(password, user.pash)
     if (compare) {
-      // approve login
       Logger.info(`[LocalAuth] User "${user.username}" logged in from ip ${requestIp.getClientIp(req)}`)
-
-      done(null, user)
-      return
+      return user
     }
 
     // deny login
     this.logFailedLoginAttempt(req, user.username, 'Invalid password')
-    done(null, null)
+    return null
   }
 
   /**

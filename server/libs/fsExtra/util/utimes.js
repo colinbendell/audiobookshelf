@@ -16,8 +16,11 @@ function utimesMillis (path, atime, mtime, callback) {
 
 function utimesMillisSync (path, atime, mtime) {
   const fd = fs.openSync(path, 'r+')
-  fs.futimesSync(fd, atime, mtime)
-  return fs.closeSync(fd)
+  try {
+    fs.futimesSync(fd, atime, mtime)
+  } finally {
+    fs.closeSync(fd)
+  }
 }
 
 module.exports = {

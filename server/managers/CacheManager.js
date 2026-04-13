@@ -1,6 +1,6 @@
 const Path = require('path')
 const fs = require('../libs/fsExtra')
-const stream = require('stream')
+const { pipeline } = require('node:stream/promises')
 const Logger = require('../Logger')
 const { resizeImage } = require('../utils/ffmpegHelpers')
 const { encodeUriPath } = require('../utils/fileUtils')
@@ -52,15 +52,12 @@ class CacheManager {
         return res.status(204).header({ 'X-Accel-Redirect': encodedURI }).send()
       }
 
-      const r = fs.createReadStream(cachePath)
-      const ps = new stream.PassThrough()
-      stream.pipeline(r, ps, (err) => {
-        if (err) {
-          console.log(err)
-          return res.sendStatus(500)
+      return pipeline(fs.createReadStream(cachePath), res).catch((err) => {
+        if (!res.headersSent) {
+          Logger.error(`[CacheManager] Failed to stream cover cache "${cachePath}"`, err)
+          res.sendStatus(500)
         }
       })
-      return ps.pipe(res)
     }
 
     // Cached cover does not exist, generate it
@@ -78,8 +75,12 @@ class CacheManager {
       return res.status(204).header({ 'X-Accel-Redirect': encodedURI }).send()
     }
 
-    var readStream = fs.createReadStream(writtenFile)
-    readStream.pipe(res)
+    return pipeline(fs.createReadStream(writtenFile), res).catch((err) => {
+      if (!res.headersSent) {
+        Logger.error(`[CacheManager] Failed to stream cover "${writtenFile}"`, err)
+        res.sendStatus(500)
+      }
+    })
   }
 
   purgeCoverCache(libraryItemId) {
@@ -155,15 +156,12 @@ class CacheManager {
 
     // Cache exists
     if (await fs.pathExists(cachePath)) {
-      const r = fs.createReadStream(cachePath)
-      const ps = new stream.PassThrough()
-      stream.pipeline(r, ps, (err) => {
-        if (err) {
-          console.log(err)
-          return res.sendStatus(500)
+      return pipeline(fs.createReadStream(cachePath), res).catch((err) => {
+        if (!res.headersSent) {
+          Logger.error(`[CacheManager] Failed to stream author cache "${cachePath}"`, err)
+          res.sendStatus(500)
         }
       })
-      return ps.pipe(res)
     }
 
     const author = await Database.authorModel.findByPk(authorId)
@@ -174,8 +172,12 @@ class CacheManager {
     let writtenFile = await resizeImage(author.imagePath, cachePath, width, height)
     if (!writtenFile) return res.sendStatus(500)
 
-    var readStream = fs.createReadStream(writtenFile)
-    readStream.pipe(res)
+    return pipeline(fs.createReadStream(writtenFile), res).catch((err) => {
+      if (!res.headersSent) {
+        Logger.error(`[CacheManager] Failed to stream author image "${writtenFile}"`, err)
+        res.sendStatus(500)
+      }
+    })
   }
 }
 module.exports = new CacheManager()

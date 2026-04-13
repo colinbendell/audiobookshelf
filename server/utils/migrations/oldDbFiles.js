@@ -119,9 +119,15 @@ module.exports.zipWrapOldDb = async () => {
       Logger.debug('[oldDbFiles] Data has been drained')
     })
 
+    output.on('error', (err) => {
+      Logger.error(`[oldDbFiles] Write stream error zipping old db folders`, err)
+      resolve(false)
+    })
+
     // good practice to catch this error explicitly
     archive.on('error', (err) => {
       Logger.error(`[oldDbFiles] Failed to zip old db folders`, err)
+      output.destroy()
       resolve(false)
     })
 
@@ -167,8 +173,11 @@ module.exports.checkHasOldDbZip = async () => {
 
   // Extract oldDb.zip
   const zip = new StreamZip.async({ file: oldDbPath })
-  await zip.extract(null, global.ConfigPath)
-  await zip.close()
+  try {
+    await zip.extract(null, global.ConfigPath)
+  } finally {
+    await zip.close().catch((err) => Logger.error('[oldDbFiles] Failed to close zip in checkHasOldDbZip', err))
+  }
 
   return this.checkHasOldDb()
 }
@@ -181,36 +190,38 @@ module.exports.checkExtractItemsUsersAndLibraries = async () => {
   const oldDbPath = Path.join(global.ConfigPath, 'oldDb.zip')
 
   const zip = new StreamZip.async({ file: oldDbPath })
-  const libraryItemsPath = Path.join(global.ConfigPath, 'libraryItems')
-  await zip.extract('libraryItems/', libraryItemsPath)
+  try {
+    const libraryItemsPath = Path.join(global.ConfigPath, 'libraryItems')
+    await zip.extract('libraryItems/', libraryItemsPath)
 
-  if (!await fs.pathExists(libraryItemsPath)) {
-    Logger.error(`[oldDbFiles] Failed to extract old libraryItems from oldDb.zip`)
-    return false
+    if (!await fs.pathExists(libraryItemsPath)) {
+      Logger.error(`[oldDbFiles] Failed to extract old libraryItems from oldDb.zip`)
+      return false
+    }
+
+    const usersPath = Path.join(global.ConfigPath, 'users')
+    await zip.extract('users/', usersPath)
+
+    if (!await fs.pathExists(usersPath)) {
+      Logger.error(`[oldDbFiles] Failed to extract old users from oldDb.zip`)
+      await fs.remove(libraryItemsPath) // Remove old library items folder
+      return false
+    }
+
+    const librariesPath = Path.join(global.ConfigPath, 'libraries')
+    await zip.extract('libraries/', librariesPath)
+
+    if (!await fs.pathExists(librariesPath)) {
+      Logger.error(`[oldDbFiles] Failed to extract old libraries from oldDb.zip`)
+      await fs.remove(usersPath) // Remove old users folder
+      await fs.remove(libraryItemsPath) // Remove old library items folder
+      return false
+    }
+
+    return true
+  } finally {
+    await zip.close().catch((err) => Logger.error('[oldDbFiles] Failed to close zip in checkExtractItemsUsersAndLibraries', err))
   }
-
-  const usersPath = Path.join(global.ConfigPath, 'users')
-  await zip.extract('users/', usersPath)
-
-  if (!await fs.pathExists(usersPath)) {
-    Logger.error(`[oldDbFiles] Failed to extract old users from oldDb.zip`)
-    await fs.remove(libraryItemsPath) // Remove old library items folder
-    return false
-  }
-
-  const librariesPath = Path.join(global.ConfigPath, 'libraries')
-  await zip.extract('libraries/', librariesPath)
-
-  if (!await fs.pathExists(librariesPath)) {
-    Logger.error(`[oldDbFiles] Failed to extract old libraries from oldDb.zip`)
-    await fs.remove(usersPath) // Remove old users folder
-    await fs.remove(libraryItemsPath) // Remove old library items folder
-    return false
-  }
-
-  await zip.close()
-
-  return true
 }
 
 /**

@@ -53,10 +53,10 @@ class ZippedAssetDownloader {
 
   async downloadAsset(assetUrl, destDir) {
     const zipPath = path.join(destDir, 'temp.zip')
-    const writer = fs.createWriteStream(zipPath)
 
     const assetResponse = await axios({ url: assetUrl, responseType: 'stream' })
 
+    const writer = fs.createWriteStream(zipPath)
     assetResponse.data.pipe(writer)
 
     await new Promise((resolve, reject) => {
@@ -66,6 +66,13 @@ class ZippedAssetDownloader {
       })
       writer.on('error', (err) => {
         Logger.error(`[ZippedAssetDownloader] Error downloading asset ${assetUrl}: ${err.message}`)
+        assetResponse.data.destroy()
+        writer.destroy()
+        reject(err)
+      })
+      assetResponse.data.on('error', (err) => {
+        Logger.error(`[ZippedAssetDownloader] Error reading asset stream ${assetUrl}: ${err.message}`)
+        writer.destroy()
         reject(err)
       })
     })

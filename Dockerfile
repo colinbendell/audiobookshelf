@@ -1,23 +1,25 @@
+ARG TARGETPLATFORM
 ARG NUSQLITE3_DIR="/usr/local/lib/nusqlite3"
 ARG NUSQLITE3_PATH="${NUSQLITE3_DIR}/libnusqlite3.so"
 
 ### STAGE 0: Build client ###
-FROM node:20-alpine AS build-client
+FROM node:24-alpine AS build-client
 
 WORKDIR /client
-COPY /client /client
+COPY /client/package* /client/
 RUN npm ci && npm cache clean --force
+COPY /client /client
 RUN npm run generate
 
 ### STAGE 1: Build server ###
-FROM node:20-alpine AS build-server
+FROM node:24-alpine AS build-server
 
-ARG NUSQLITE3_DIR
 ARG TARGETPLATFORM
+ARG NUSQLITE3_DIR
 
 ENV NODE_ENV=production
 
-RUN apk add --no-cache --update \
+RUN apk add --no-cache \
   curl \
   make \
   python3 \
@@ -25,7 +27,7 @@ RUN apk add --no-cache --update \
   unzip
 
 WORKDIR /server
-COPY index.js package* /server
+COPY index.js package* /server/
 COPY /server /server/server
 
 RUN case "$TARGETPLATFORM" in \
@@ -41,13 +43,13 @@ RUN case "$TARGETPLATFORM" in \
 RUN npm ci --only=production
 
 ### STAGE 2: Create minimal runtime image ###
-FROM node:20-alpine
+FROM node:24-alpine
 
 ARG NUSQLITE3_DIR
 ARG NUSQLITE3_PATH
 
 # Install only runtime dependencies
-RUN apk add --no-cache --update \
+RUN apk add --no-cache \
   tzdata \
   ffmpeg \
   tini

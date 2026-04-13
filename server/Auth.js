@@ -1,7 +1,6 @@
 const { Request, Response, NextFunction } = require('express')
 const passport = require('passport')
-const JwtStrategy = require('passport-jwt').Strategy
-const ExtractJwt = require('passport-jwt').ExtractJwt
+const { JwtStrategy, ExtractJwt } = require('./libs/passportJwt')
 
 const Database = require('./Database')
 const Logger = require('./Logger')

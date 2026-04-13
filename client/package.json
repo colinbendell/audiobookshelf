@@ -4,6 +4,9 @@
   "buildNumber": 1,
   "description": "Self-hosted audiobook and podcast client",
   "main": "index.js",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "dev": "nuxt",
     "dev2": "nuxt --hostname localhost --port 1337",
